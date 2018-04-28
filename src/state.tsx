@@ -12,9 +12,11 @@ export type ScreenCreator<State, BaseScreen, ResultScreen> = (state: Observable<
 
 export type ScreenDefinition<BaseState, BaseScreen> = {
   extend<A extends BaseState, B>(
-    typ: new (...a: any[]) => A,
+    state_type: new (...a: any[]) => A,
     def: ScreenCreator<A, BaseScreen, BaseScreen & B>
   ): ScreenDefinition<A, B>
+  state_type: Creator<BaseState>
+  creator: ScreenCreator<BaseState, Screen, BaseScreen>
 }
 
 
@@ -24,8 +26,8 @@ export type ScreenDefinition<BaseState, BaseScreen> = {
 export class App {
 
   registry = new Map<any, {
-    creator: ScreenCreator<any, Screen, Screen>,
-    parent: Creator<Screen> | null
+    creator: ScreenCreator<any, any, any>,
+    parent: ScreenDefinition<any, any> | undefined
   }>()
 
   creator_instances = new Map<any, any>()
@@ -37,24 +39,32 @@ export class App {
   /**
    * Create a screen definition for the given state type.
    */
-  screen<T, U extends Screen, Base extends Screen = Screen>(typ: Creator<T>, def: ScreenCreator<T, Base, U>, parent?: ScreenDefinition<any, any>): ScreenDefinition<T, U> {
+  screen<T, U extends Screen, Base extends Screen = Screen>(state_type: Creator<T>, def: ScreenCreator<T, Base, U>, parent?: ScreenDefinition<any, any>): ScreenDefinition<T, U> {
     // check that the state type isn't already in the registry
-    this.registry.set(typ, {
+    if (this.registry.has(state_type))
+      throw new Error(`State '${state_type.name}' is already registered to a screen`)
+
+    this.registry.set(state_type, {
       creator: def,
-      parent: null
+      parent
     })
+
     var _this = this
-    var res = {
+    var res: ScreenDefinition<T, U> = {
       extend<A extends T, B>(typ: Creator<A>, creator: ScreenCreator<A, U, U & B>) {
-        _this.screen(typ, creator, res)
-      }
-    } as ScreenDefinition<T, U>
+        return _this.screen(typ, creator, res)
+      },
+      state_type: state_type,
+      creator: def as any // this is a cheat
+    }
 
     return res
   }
 
   /**
    * When the state changes, find the corresponding screen and instanciate it along with its dependencies.
+   *
+   * Once instanciated, the result will be set to this.o_screen
    */
   changeScreen(state_obj: any) {
 
@@ -90,14 +100,6 @@ export class App {
 export class Screen {
 
   app!: App
-
-  async leave(): Promise<void> {
-
-  }
-
-  async init(): Promise<void> {
-
-  }
 
   block<K extends keyof this & Symbol>(t: K) {
     return instanciate_verb(new Displayer(
