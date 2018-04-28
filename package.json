@@ -7,7 +7,7 @@
   "browser": "./module/state.js",
   "main": "./module/state.js",
   "jsnext:main": "./module/state.js",
-  "typings": "./dist/elt.d.ts",
+  "types": "./module/state.d.ts",
   "scripts": {
     "build": "tsc",
     "prepublish": "npm run build",
