@@ -1,0 +1,16 @@
+{
+  "name": "elt-state",
+  "version": "0.1.0",
+  "repository": "https://github.com/elementjs/elt-state",
+  "description": "",
+  "license": "MIT",
+  "browser": "./module/state.js",
+  "main": "./module/state.js",
+  "jsnext:main": "./module/state.js",
+  "typings": "./dist/elt.d.ts",
+  "scripts": {
+    "build": "tsc",
+    "prepublish": "npm run build",
+    "watch": "wtsc -w"
+  }
+}

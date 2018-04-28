@@ -1,0 +1,17 @@
+{
+    "compilerOptions": {
+        "target": "es5",
+        "module": "commonjs",
+        "moduleResolution": "node",
+        "declaration": true,
+        "inlineSourceMap": true,
+        "experimentalDecorators": true,
+        "strict": true,
+        "noUnusedLocals": true,
+        "outDir": "./module",
+        "reactNamespace": "E",
+        "jsx": "react",
+        "rootDir": "./src",
+        "lib": ["es6", "dom"]
+    }
+}
