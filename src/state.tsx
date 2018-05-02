@@ -87,12 +87,11 @@ export class Partial<State> {
 
   async changeScreen<OtherState>(
     screen: Screen<OtherState>,
-    new_values: AssignPartial<OtherState>
+    new_values: AssignPartial<OtherState> = {}
   ) {
     this.app.changeScreen(screen, new_values as any)
     // Go the the other partial
   }
-
 
   /**
    * Display the contents of a block
@@ -101,7 +100,7 @@ export class Partial<State> {
   block<BaseState, ThisState extends BaseState>(
     this: Partial<ThisState>,
     fn: (this: Partial<BaseState>) => Node
-  ) {
+  ): Node {
 
   }
 
@@ -138,16 +137,17 @@ export class Partial<State> {
 export class App {
 
   active_screen = o(null as Partial<any> | null)
-
   all_active_partials = new Map<typeof Partial, Partial<any>>()
 
-  constructor(public o_state: Observable<any>) {
+  main: string = ''
 
+  constructor(public o_state: Observable<any>, public fn: (this: Partial<any>) => Node) {
+    this.main = fn.name
   }
 
-  changeScreen<State>(
+  async changeScreen<State>(
     screen: Screen<State>,
-    new_values: AssignPartial<State>
+    new_values: AssignPartial<State> = {}
   ) {
     var inst = new screen.state_class()
     const cur = this.o_state.get()
@@ -162,4 +162,9 @@ export class App {
 
     const next_screen = new screen(this.o_state)
   }
+
+  mainBlock(): Node {
+
+  }
+
 }
