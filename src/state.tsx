@@ -1,5 +1,5 @@
 
-import { o, Observable, AssignPartial } from 'elt'
+import { o, Observable, AssignPartial, Observer, RO, ObserverFunction, ReadonlyObserver, Changes, ReadonlyObservable } from 'elt'
 
 /**
  * Nouvelle idée : on fait des require, comme avec les services d'avant, sauf que
@@ -13,9 +13,13 @@ export const InitList = Symbol('initlist')
 
 export interface Screen<State> {
   new (...a: any[]): Partial<State>
-  state_type: new () => State
+  state_class: new () => State
   stateInit?: (state: State) => Promise<State>
 }
+
+export type Diff<T extends string, U extends string> = ({[P in T]: P } & {[P in U]: never } & { [x: string]: never })[T];
+export type Minus<T, U> = {[P in Diff<keyof T, keyof U>]: T[P]};
+
 
 /**
  * The base class to create services.
@@ -26,8 +30,9 @@ export interface Screen<State> {
 export class Partial<State> {
 
   private [InitList]: Partial<any>[] = []
+  protected observers: ReadonlyObserver<any, any>[] = []
 
-  constructor(app: App) {
+  constructor(public app: App) {
     this.o_state = app.o_state
   }
 
@@ -54,11 +59,10 @@ export class Partial<State> {
    *
    * @param next_state The next state that is about to be set throughout the application.
    */
-  async init(next_state: State): Promise<State | void> {
+  async init() {
     for (var p of this[InitList]) {
-      next_state = await p.init(next_state) || next_state
+      await p.init()
     }
-    return next_state
   }
 
   /**
@@ -74,14 +78,18 @@ export class Partial<State> {
    *
    * @param service The class of the service an instance
    */
-  require<BaseState, ThisState extends BaseState, P extends Partial<BaseState>> (
-    this: Partial<ThisState>,
+  require<P extends Partial<any>>(
+    // this: Partial<>,
     service: new (...a: any[]) => P
   ): P {
     // ... ?
   }
 
-  async changeScreen<OtherState>(screen: Screen<OtherState>, new_values: AssignPartial<OtherState>) {
+  async changeScreen<OtherState>(
+    screen: Screen<OtherState>,
+    new_values: AssignPartial<OtherState>
+  ) {
+    this.app.changeScreen(screen, new_values as any)
     // Go the the other partial
   }
 
@@ -95,6 +103,30 @@ export class Partial<State> {
     fn: (this: Partial<BaseState>) => Node
   ) {
 
+  }
+
+  observe<T, U = void>(a: RO<T>, cbk: ObserverFunction<T, U>): ReadonlyObserver<T, U>
+  observe<T, U = void>(a: RO<T>, cbk: ObserverFunction<T, U>, immediate: true): ReadonlyObserver<T, U> | null
+  observe<T, U = void>(a: RO<T>, cbk: ReadonlyObserver<T, U> | ObserverFunction<T, U>, immediate?: boolean): ReadonlyObserver<T, U> | null {
+    if (immediate && !(a instanceof Observable)) {
+      typeof cbk === 'function' ? cbk(a as T, new Changes(a as T)) : cbk.call(a as T)
+      return null
+    }
+
+    const ob: ReadonlyObservable<T> = a instanceof Observable ? a : o(a)
+    const observer = typeof cbk === 'function' ?  ob.createObserver(cbk) : cbk
+    this.observers.push(observer)
+
+    if (immediate) {
+      observer.call(o.get(ob))
+    }
+
+    observer.startObserving()
+    return observer
+  }
+
+  unobserve() {
+    for (var ob of this.observers) ob.stopObserving()
   }
 
 }
@@ -113,8 +145,11 @@ export class App {
 
   }
 
-  changeScreen<State>(screen: Screen<State>, new_values: AssignPartial<State>) {
-    var inst = new screen.state_type()
+  changeScreen<State>(
+    screen: Screen<State>,
+    new_values: AssignPartial<State>
+  ) {
+    var inst = new screen.state_class()
     const cur = this.o_state.get()
 
     for (var x in cur) {
