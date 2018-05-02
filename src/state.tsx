@@ -1,5 +1,5 @@
 
-import { o, Observable, AssignPartial, Observer, RO, ObserverFunction, ReadonlyObserver, Changes, ReadonlyObservable } from 'elt'
+import { o, Observable, AssignPartial, Display, RO, ObserverFunction, ReadonlyObserver, Changes, ReadonlyObservable } from 'elt'
 
 /**
  * Nouvelle idée : on fait des require, comme avec les services d'avant, sauf que
@@ -10,15 +10,15 @@ import { o, Observable, AssignPartial, Observer, RO, ObserverFunction, ReadonlyO
  *   - on active un service avec un state donné !
  */
 export const InitList = Symbol('initlist')
+export const Init = Symbol('init')
+export const Inited = Symbol('inited')
+export const DeInit = Symbol('deinit')
 
 export interface Screen<State> {
   new (...a: any[]): Partial<State>
   state_class: new () => State
   stateInit?: (state: State) => Promise<State>
 }
-
-export type Diff<T extends string, U extends string> = ({[P in T]: P } & {[P in U]: never } & { [x: string]: never })[T];
-export type Minus<T, U> = {[P in Diff<keyof T, keyof U>]: T[P]};
 
 
 /**
@@ -59,19 +59,23 @@ export class Partial<State> {
    *
    * @param next_state The next state that is about to be set throughout the application.
    */
-  async init() {
-    for (var p of this[InitList]) {
-      await p.init()
-    }
+  async init(state: State): Promise<State | void> {
+
   }
 
-  /**
-   * This is run once the screen has been drawn, in the same order.
-   */
-  async postInit() {
+  [Inited] = false
+  async [Init](state: State): Promise<State | void> {
+    // No need to reinit an already inited state.
+    if (this[Inited]) return state
+
     for (var p of this[InitList]) {
-      await p.postInit()
+      state = await p[Init](state) || state
     }
+    return await this.init(state) || state
+  }
+
+  [DeInit]() {
+    for (var ob of this.observers) ob.stopObserving()
   }
 
   /**
@@ -80,8 +84,12 @@ export class Partial<State> {
    */
   require<P extends Partial<any>>(
     // this: Partial<>,
-    service: new (...a: any[]) => P
+    service: new (app: App) => P
   ): P {
+    // We should look up if we instanciated this service already.
+    var s = new service(this.app)
+    this[InitList].push(s)
+    return s
     // ... ?
   }
 
@@ -101,7 +109,7 @@ export class Partial<State> {
     this: Partial<ThisState>,
     fn: (this: Partial<BaseState>) => Node
   ): Node {
-
+    // ???
   }
 
   observe<T, U = void>(a: RO<T>, cbk: ObserverFunction<T, U>): ReadonlyObserver<T, U>
@@ -124,8 +132,35 @@ export class Partial<State> {
     return observer
   }
 
-  unobserve() {
-    for (var ob of this.observers) ob.stopObserving()
+  /**
+   * Extract the blocks object which contains the views bound to the correct partial.
+   */
+  get blocks() {
+    var res: {[name: string]: () => Node} = {}
+
+    this.all_partials.forEach(p => {
+      for (var x in p) {
+        if (x[0] >= 'A' && x[0] <= 'Z')
+          // This is an error ! They will be recreated all the time !
+          res[x] = (p as any)[x].bind(p)
+      }
+    })
+    return res
+
+  }
+
+  get all_partials() {
+    var res = new Set<Partial<any>>()
+    function fill(p: Partial<any>) {
+      for (var _ of p[InitList]) {
+        if (!res.has(_)) {
+          fill(_)
+        }
+      }
+      res.add(p)
+    }
+    fill(this)
+    return res
   }
 
 }
@@ -138,6 +173,7 @@ export class App {
 
   active_screen = o(null as Partial<any> | null)
   all_active_partials = new Map<typeof Partial, Partial<any>>()
+  o_blocks = o(null as {[name: string]: () => Node} | null)
 
   main: string = ''
 
@@ -159,12 +195,33 @@ export class App {
 
     // We know what we're doing.
     inst = o.assign(inst, new_values)
+    console.log(inst)
 
-    const next_screen = new screen(this.o_state)
+    const next_screen = new screen(this)
+
+    // this is the next o_state
+    inst = await next_screen[Init](inst) || inst
+
+    // If we're still here, it means that we could change state without a problem,
+    // so we're just going to commit the new state.
+
+    // We pause the state to avoid problems during redrawing ; this way, everything set
+    // to disappear should go away without a problem.
+    this.o_state.pause()
+
+    // We can safely set the mapped partials now.
+
+    // We now swap the new blocks.
+    this.o_blocks.set(next_screen.blocks)
+
+    this.o_state.resume()
   }
 
   mainBlock(): Node {
-
+    return Display(this.o_blocks.tf(b => {
+      if (!b) return null
+      return b[this.main]
+    }).tf(b => b ? b() : null))
   }
 
 }
