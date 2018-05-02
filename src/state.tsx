@@ -1,6 +1,5 @@
 
-import { o, Observable } from 'elt'
-
+import { o, Observable, AssignPartial } from 'elt'
 
 /**
  * Nouvelle idée : on fait des require, comme avec les services d'avant, sauf que
@@ -10,7 +9,13 @@ import { o, Observable } from 'elt'
  *   - les blocks sont résolus dans l'ordre des require.
  *   - on active un service avec un state donné !
  */
+export const InitList = Symbol('initlist')
 
+export interface Screen<State> {
+  new (...a: any[]): Partial<State>
+  state_type: new () => State
+  stateInit?: (state: State) => Promise<State>
+}
 
 /**
  * The base class to create services.
@@ -19,6 +24,12 @@ import { o, Observable } from 'elt'
  * Do not subclass a service unless its state is the exact same type.
  */
 export class Partial<State> {
+
+  private [InitList]: Partial<any>[] = []
+
+  constructor(app: App) {
+    this.o_state = app.o_state
+  }
 
   /**
    * The state observable.
@@ -43,40 +54,37 @@ export class Partial<State> {
    *
    * @param next_state The next state that is about to be set throughout the application.
    */
-  async init(next_state: State) {
-
+  async init(next_state: State): Promise<State | void> {
+    for (var p of this[InitList]) {
+      next_state = await p.init(next_state) || next_state
+    }
+    return next_state
   }
 
   /**
-   *
+   * This is run once the screen has been drawn, in the same order.
    */
   async postInit() {
-
+    for (var p of this[InitList]) {
+      await p.postInit()
+    }
   }
 
   /**
    *
    * @param service The class of the service an instance
    */
-  require<BaseState, ThisState extends BaseState>(
+  require<BaseState, ThisState extends BaseState, P extends Partial<BaseState>> (
     this: Partial<ThisState>,
-    service: new (...a: any[]) => Partial<BaseState>
-  ) {
-
+    service: new (...a: any[]) => P
+  ): P {
+    // ... ?
   }
 
-  /**
-   * Change the active partial.
-   *
-   * This method is asynchronous, because it will return only when the state has been
-   * effectively changed (and thus after all the `init()` have been called)
-   *
-   * @param partial The partial to activate
-   * @param state
-   */
-  async partial<OtherState>(partial: new (...a: any[]) => Partial<OtherState>, state: OtherState) {
-    // Go the the other service
+  async changeScreen<OtherState>(screen: Screen<OtherState>, new_values: AssignPartial<OtherState>) {
+    // Go the the other partial
   }
+
 
   /**
    * Display the contents of a block
@@ -97,7 +105,26 @@ export class Partial<State> {
  */
 export class App {
 
-  active_partial = o(null as Partial<any> | null)
+  active_screen = o(null as Partial<any> | null)
 
+  all_active_partials = new Map<typeof Partial, Partial<any>>()
 
+  constructor(public o_state: Observable<any>) {
+
+  }
+
+  changeScreen<State>(screen: Screen<State>, new_values: AssignPartial<State>) {
+    var inst = new screen.state_type()
+    const cur = this.o_state.get()
+
+    for (var x in cur) {
+      if (x in inst)
+        (inst as any)[x] = cur[x]
+    }
+
+    // We know what we're doing.
+    inst = o.assign(inst, new_values)
+
+    const next_screen = new screen(this.o_state)
+  }
 }
