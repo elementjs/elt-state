@@ -59,11 +59,11 @@ export class Partial<State> {
    *
    * @param next_state The next state that is about to be set throughout the application.
    */
-  async init(state: State): Promise<State | void> {
+  async init(state: Readonly<State>): Promise<any> {
 
   }
 
-  [Inited] = false
+  private [Inited] = false
   async [Init](state: State): Promise<State | void> {
     // No need to reinit an already inited state.
     if (this[Inited]) return state
@@ -107,9 +107,9 @@ export class Partial<State> {
    */
   block<BaseState, ThisState extends BaseState>(
     this: Partial<ThisState>,
-    fn: (this: Partial<BaseState>) => Node
+    name: string
   ): Node {
-    // ???
+    return this.app.block(name)
   }
 
   observe<T, U = void>(a: RO<T>, cbk: ObserverFunction<T, U>): ReadonlyObserver<T, U>
@@ -175,10 +175,8 @@ export class App {
   all_active_partials = new Map<typeof Partial, Partial<any>>()
   o_blocks = o(null as {[name: string]: () => Node} | null)
 
-  main: string = ''
+  constructor(public o_state: Observable<any>, public main: string) {
 
-  constructor(public o_state: Observable<any>, public fn: (this: Partial<any>) => Node) {
-    this.main = fn.name
   }
 
   async changeScreen<State>(
@@ -195,7 +193,6 @@ export class App {
 
     // We know what we're doing.
     inst = o.assign(inst, new_values)
-    console.log(inst)
 
     const next_screen = new screen(this)
 
@@ -208,6 +205,7 @@ export class App {
     // We pause the state to avoid problems during redrawing ; this way, everything set
     // to disappear should go away without a problem.
     this.o_state.pause()
+    this.o_state.set(inst)
 
     // We can safely set the mapped partials now.
 
@@ -217,11 +215,15 @@ export class App {
     this.o_state.resume()
   }
 
-  mainBlock(): Node {
+  block(name: string) {
     return Display(this.o_blocks.tf(b => {
       if (!b) return null
-      return b[this.main]
+      return b[name]
     }).tf(b => b ? b() : null))
+  }
+
+  mainBlock(): Node {
+    return this.block(this.main)
   }
 
 }
