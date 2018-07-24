@@ -42,7 +42,7 @@ export class Partial<State> {
    * This object instance is actually shared by all the partials active in a same
    * app. It is never recreated.
    */
-  o_state!: Observable<State>
+  o_state: Observable<State>
 
   /**
    * Implement this method if this service is to do some calls/modify things *before*
