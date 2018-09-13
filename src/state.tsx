@@ -1,23 +1,23 @@
 
 import { o, Observable, AssignPartial, Display, RO, ObserverFunction, ReadonlyObserver, Changes, ReadonlyObservable } from 'elt'
 
-/**
- * Nouvelle idée : on fait des require, comme avec les services d'avant, sauf que
- *
- *   - les blocks sont des méthodes des services
- *   - on ne peut require que des services dont les states sont des sous-classes ou la même
- *   - les blocks sont résolus dans l'ordre des require.
- *   - on active un service avec un state donné !
- */
 export const InitList = Symbol('initlist')
 export const Init = Symbol('init')
 export const Inited = Symbol('inited')
 export const DeInit = Symbol('deinit')
 
-export interface Screen<State> {
-  new (...a: any[]): Partial<State>
-  state_class: new () => State
-  stateInit?: (state: State) => Promise<State>
+export interface Screen<S extends State> {
+  new (...a: any[]): Block<S>
+  stateInit?: (state: S) => Promise<S>
+}
+
+export interface BlockInstantiator<S extends State> {
+  new (app: App): Block<S>
+}
+
+
+export class State {
+
 }
 
 
@@ -27,13 +27,15 @@ export interface Screen<State> {
  * Services are meant to be used by *composition*, and not through extension.
  * Do not subclass a service unless its state is the exact same type.
  */
-export class Partial<State> {
+export class Block<S extends State> {
 
-  private [InitList]: Partial<any>[] = []
+  private [InitList]: Block<State>[] = []
   protected observers: ReadonlyObserver<any, any>[] = []
 
   constructor(public app: App) {
-    this.o_state = app.o_state
+    // The following any is mandatory since the o_state from app is known just as
+    // a basic Observable<State> and not the particular subclass we are using now.
+    this.o_state = app.o_state as any
   }
 
   /**
@@ -42,7 +44,27 @@ export class Partial<State> {
    * This object instance is actually shared by all the partials active in a same
    * app. It is never recreated.
    */
-  o_state: Observable<State>
+  o_state: Observable<S>
+
+  /**
+   * Set the state to another State instance. This instance does not have to be
+   * related to the current instance ; this method is used to transition between
+   * very varied states of the application.
+   *
+   * @param new_state: the new state to transition to.
+   */
+  setNewState(new_state: State) {
+    this.o_state.set(new_state as any)
+  }
+
+  /**
+   * Assign values to the current state. Shorthand for this.o_state.assign(values)
+   *
+   * @param values: The values to assign to the current state.
+   */
+  assign(values: AssignPartial<S>) {
+    return this.o_state.assign(values)
+  }
 
   /**
    * Implement this method if this service is to do some calls/modify things *before*
@@ -59,57 +81,54 @@ export class Partial<State> {
    *
    * @param next_state The next state that is about to be set throughout the application.
    */
-  async init(state: Readonly<State>): Promise<any> {
+  async init(state: Readonly<S>): Promise<any> {
+
+  }
+
+  async deinit(): Promise<any> {
 
   }
 
   private [Inited] = false
-  async [Init](state: State): Promise<State | void> {
+  async [Init](state: S): Promise<S | void> {
     // No need to reinit an already inited state.
     if (this[Inited]) return state
 
     for (var p of this[InitList]) {
-      state = await p[Init](state) || state
+      state = (await p[Init](state) || state) as S
     }
+    this[Inited] = true
     return await this.init(state) || state
   }
 
   [DeInit]() {
+    this.deinit()
     for (var ob of this.observers) ob.stopObserving()
   }
 
   /**
    *
-   * @param service The class of the service an instance
+   * @param block_def The class of the service an instance
    */
-  require<P extends Partial<any>>(
+  require<P extends Block<any>>(
     // this: Partial<>,
-    service: new (app: App) => P
+    block_def: new (app: App) => P
   ): P {
     // We should look up if we instanciated this service already.
-    var s = new service(this.app)
+    var s = new block_def(this.app)
     this[InitList].push(s)
     return s
     // ... ?
-  }
-
-  async changeScreen<OtherState>(
-    screen: Screen<OtherState>,
-    new_values: AssignPartial<OtherState> = {}
-  ) {
-    this.app.changeScreen(screen, new_values as any)
-    // Go the the other partial
   }
 
   /**
    * Display the contents of a block
    * @param fn
    */
-  block<BaseState, ThisState extends BaseState>(
-    this: Partial<ThisState>,
-    name: string
+  view(
+    name: keyof this
   ): Node {
-    return this.app.block(name)
+    return this.app.view(name as string)
   }
 
   observe<T, U = void>(a: RO<T>, cbk: ObserverFunction<T, U>): ReadonlyObserver<T, U>
@@ -135,7 +154,7 @@ export class Partial<State> {
   /**
    * Extract the blocks object which contains the views bound to the correct partial.
    */
-  get blocks() {
+  get views() {
     var res: {[name: string]: () => Node} = {}
 
     this.all_partials.forEach(p => {
@@ -150,8 +169,8 @@ export class Partial<State> {
   }
 
   get all_partials() {
-    var res = new Set<Partial<any>>()
-    function fill(p: Partial<any>) {
+    var res = new Set<Block<any>>()
+    function fill(p: Block<any>) {
       for (var _ of p[InitList]) {
         if (!res.has(_)) {
           fill(_)
@@ -166,64 +185,45 @@ export class Partial<State> {
 }
 
 
+export const MainView = Symbol('main-view')
+
+
+export type BlockMap = Map<typeof Block, Block<any>>
+
 /**
  *
  */
 export class App {
 
-  active_screen = o(null as Partial<any> | null)
-  all_active_partials = new Map<typeof Partial, Partial<any>>()
-  o_blocks = o(null as {[name: string]: () => Node} | null)
+  constructor(public o_state: Observable<State>) { }
+  current_blocks: BlockMap | null = null
+  current_views?: {[sym: Symbol]: () => Node}
 
-  constructor(public o_state: Observable<any>, public main: string) {
+  protected o_partials = this.o_state.tf((new_state, old_state, current_value) => {
+    // If new_state and old_state have a different type, then
+    // we're going to build the partials
+
+    // Otherwise, just return the current partials that were already computed
+    return current_value
+  })
+
+  asNode(): Node {
 
   }
 
-  async changeScreen<State>(
-    screen: Screen<State>,
-    new_values: AssignPartial<State> = {}
-  ) {
-    var inst = new screen.state_class()
-    const cur = this.o_state.get()
+  view(name: string | Symbol) {
+    return Display(this.o_partials.tf(partials => {
+      var result: undefined | (() => Node)
 
-    for (var x in cur) {
-      if (x in inst)
-        (inst as any)[x] = cur[x]
-    }
+      partials.forEach(partial => {
+        var r = (partial as any)[name as any]
+        if (typeof r === 'function') {
+          result = r
+        }
+      })
 
-    // We know what we're doing.
-    inst = o.assign(inst, new_values)
-
-    const next_screen = new screen(this)
-
-    // this is the next o_state
-    inst = await next_screen[Init](inst) || inst
-
-    // If we're still here, it means that we could change state without a problem,
-    // so we're just going to commit the new state.
-
-    // We pause the state to avoid problems during redrawing ; this way, everything set
-    // to disappear should go away without a problem.
-    this.o_state.pause()
-    this.o_state.set(inst)
-
-    // We can safely set the mapped partials now.
-
-    // We now swap the new blocks.
-    this.o_blocks.set(next_screen.blocks)
-
-    this.o_state.resume()
-  }
-
-  block(name: string) {
-    return Display(this.o_blocks.tf(b => {
-      if (!b) return null
-      return b[name]
+      return result
     }).tf(b => b ? b() : null))
-  }
-
-  mainBlock(): Node {
-    return this.block(this.main)
   }
 
 }
