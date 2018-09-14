@@ -12,13 +12,21 @@ export interface BlockInstantiator {
 
 
 export class State {
-  static create<S extends State>(this: new () => S, values: Partial<S>) {
-    var res = new this()
-    for (var a in values) {
-      (res as any)[a] = values[a]
-    }
-    return res
+
+  // FIXME use o.assign ?
+  create<S extends State>(this: new () => S, ...values: Partial<S>[]) {
+    var c = new this()
+    Object.assign(c, ...values)
+    return c
   }
+
+  clone(values: Partial<this>) {
+    var co = this.constructor as new () => this
+    var c = new co()
+    Object.assign(c, this, values)
+    return c
+  }
+
 }
 
 
@@ -86,10 +94,10 @@ export class Block {
    * Display the contents of a block
    * @param fn
    */
-  view(
+  display(
     v: Symbol
   ): Node {
-    return this.app.view(v)
+    return this.app.display(v)
   }
 
 }
@@ -97,8 +105,22 @@ export class Block {
 
 export const MainView = Symbol('main-view')
 
+export class Registry {
+
+  get(creator: BlockInstantiator) {
+
+  }
+
+  add() {
+
+  }
+
+}
+
+
 /**
- *
+ *  FIXME: concept of subapp, that reads the registry of its parent app,
+ *  but handle its own and has its own singletons.
  */
 export class App {
 
@@ -106,7 +128,7 @@ export class App {
   registry = new Map<new (...a: any[]) => any, any>()
   o_views = new Observable<any>({})
 
-  activate(...params: (BlockInstantiator|State)[]) {
+  activate(...params: (BlockInstantiator)[]) {
     var new_registry = new Map<new (...a: any[]) => any, any>()
 
     var par: any
@@ -118,14 +140,14 @@ export class App {
     var views: any = {}
     this.registry.forEach(value => {
       for (var x in value) {
-        if (typeof x === 'symbol')
+        if (typeof x === 'symbol' && typeof value[x] === 'function' && value[x].length === 0)
           views[x] = value[x]
       }
     })
     this.o_views.set(views)
   }
 
-  view(v: Symbol): Node {
+  display(v: Symbol): Node {
     // urgh... really should not need that any
     return Display(this.o_views.p(v as any))
   }
