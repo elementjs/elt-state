@@ -1,10 +1,9 @@
 
 import { Observable, ReadonlyObserver, Display, Mixin, o } from 'elt'
 
-export const InitList = Symbol('initlist')
-export const Init = Symbol('init')
+
 export const Inited = Symbol('inited')
-export const DeInit = Symbol('deinit')
+
 
 export interface BlockInstantiator<B extends Block> {
   new(app: App): B
@@ -54,6 +53,18 @@ export class Block {
 
   private [requirements] = new Set<new (...a: any[]) => any>()
   protected observers: ReadonlyObserver<any, any>[] = []
+
+  mark(s: Set<Function>) {
+    s.add(this.constructor)
+    this[requirements].forEach(req => {
+      var proto = req.constructor
+      if (req instanceof Block && !s.has(proto)) {
+        req.mark(s)
+      } else {
+        s.add(proto)
+      }
+    })
+  }
 
 
   /**
@@ -116,7 +127,7 @@ export const MainView = Symbol('main-view')
  */
 export class Registry {
 
-  private cache = new Map<any, any>()
+  private cache = new Map<BlockInstantiator<any> | (new () => any), any>()
   private children = new Set<Registry>()
   private parent: Registry | null = null
   private init_list: Block[] = []
@@ -168,7 +179,6 @@ export class Registry {
         }
       }
     })
-    console.log(Object.getOwnPropertySymbols(views))
     return views
   }
 
@@ -179,17 +189,33 @@ export class Registry {
   /**
    * Remove entries from the registry
    */
-  cleanup() {
+  cleanup(active_blocks: BlockInstantiator<any>[]) {
+    var mark = new Set<Function>()
+    for (var bl of active_blocks) {
+      var b = this.cache.get(bl) as Block
+      b.mark(mark)
+    }
 
+    // now, we sweep
+    this.cache.forEach((value, key) => {
+      if (!mark.has(key)) {
+        this.cache.delete(key)
+        if (value instanceof Block) {
+          value.deinit()
+        }
+      }
+    })
   }
 
   async initPending() {
+    var i = 0
     try {
-      for (var i of this.init_list) {
-        await i.init()
+      for (var block of this.init_list) {
+        await block.init()
+        i++
       }
     } finally {
-      this.init_list = []
+      this.init_list = this.init_list.slice(i)
     }
   }
 
@@ -232,15 +258,17 @@ export class App extends Mixin<Comment>{
    * @param params The blocks to activate, some states to put in the
    * registry already initialized to the correct values, etc.
    */
-  activate(...params: (BlockInstantiator<any> | Data)[]) {
-
+  async activate(...params: (BlockInstantiator<any> | Data)[]) {
     params.filter(p => typeof p !== 'function').forEach(d => this.registry.add(d))
-    params.filter(p => typeof p === 'function').forEach((d: any) => this.registry.get(d))
-    // cleanup registry ?
-    this.registry.initPending()
+    var blocks = params.filter(p => typeof p === 'function') as BlockInstantiator<any>[]
+    blocks.forEach((d: any) => this.registry.get(d))
+    this.registry.cleanup(blocks)
 
     // Extract the views from the currently active blocks
     this.o_views.set(this.registry.getViews())
+
+    // Launch the init of each block
+    this.registry.initPending()
   }
 
   /**
