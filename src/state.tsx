@@ -1,20 +1,20 @@
 
-import { Observable, ReadonlyObserver, Display, o, Component, Attrs, instanciate_verb, Mixin } from 'elt'
+import { Observable, ReadonlyObserver, Display, Mixin, o } from 'elt'
 
 export const InitList = Symbol('initlist')
 export const Init = Symbol('init')
 export const Inited = Symbol('inited')
 export const DeInit = Symbol('deinit')
 
-export interface BlockInstantiator {
-  new (app: App): Block
+export interface BlockInstantiator<B extends Block> {
+  new(app: App): B
 }
 
 
-export class State {
+export class Data {
 
   // FIXME use o.assign ?
-  create<S extends State>(this: new () => S, ...values: Partial<S>[]) {
+  create<S extends Data>(this: new () => S, ...values: Partial<S>[]) {
     var c = new this()
     Object.assign(c, ...values)
     return c
@@ -44,15 +44,17 @@ export class Block {
    * Set to true in a subclass if you want this block to stay instanciated
    * even if no other block need it.
    */
+  constructor(public app: App) {
+    // The following any is mandatory since the o_state from app is known just as
+    // a basic Observable<State> and not the particular subclass we are using now.
+  }
+
+  registry = this.app.registry
   is_static = false
 
   private [requirements] = new Set<new (...a: any[]) => any>()
   protected observers: ReadonlyObserver<any, any>[] = []
 
-  constructor(public registry: Registry) {
-    // The following any is mandatory since the o_state from app is known just as
-    // a basic Observable<State> and not the particular subclass we are using now.
-  }
 
   /**
    * Extend this method to run code whenever the block is created and
@@ -73,9 +75,9 @@ export class Block {
    *
    * @param block_def
    */
-  require<B extends Block>(block_def: new (app: App) => B): B
+  require<B extends Block>(block_def: BlockInstantiator<B>): B
   /**
-   * 
+   *
    * @param klass
    * @param defaults
    */
@@ -88,9 +90,8 @@ export class Block {
 
     this[requirements].add(def)
 
-    var res = def.length > 1 ? new def(this.registry) : new def()
     // this[InitList].push(s)
-    return res
+    return this.registry.get(def, defaults)
     // ... ?
   }
 
@@ -101,7 +102,7 @@ export class Block {
   display(
     v: Symbol
   ): Node {
-    return this.registry.display(v)
+    return this.app.display(v)
   }
 
 }
@@ -118,6 +119,7 @@ export class Registry {
   private cache = new Map<any, any>()
   private children = new Set<Registry>()
   private parent: Registry | null = null
+  private init_list: Block[] = []
 
   setParent(parent: Registry | null) {
     if (parent != null) {
@@ -130,8 +132,8 @@ export class Registry {
 
   constructor(public app: App) { }
 
-  get<T>(klass: new () => T): T
-  get(creator: BlockInstantiator): Block
+  get<T>(klass: new () => T, defaults?: any): T
+  get<B extends Block>(creator: BlockInstantiator<B>): B
   get(key: any, defaults?: any): any {
     // First try to see if we own a version of this service.
     var first_attempt = this.cache.get(key)
@@ -148,9 +150,30 @@ export class Registry {
     // We just check that the asked class/function has one argument, in which
     // case we give it the app as it *should* be a block (we do not allow
     // constructors with parameters for data services)
-    var result = key.length === 1 ? new key(this.app) : new key()
+    var result = key.prototype instanceof Block || key === Block ? new key(this.app) : o(new key())
     this.cache.set(key, result)
+    if (result instanceof Block)
+      this.init_list.push(result)
     return result
+  }
+
+  getViews() {
+    var views: any = {}
+    this.cache.forEach(value => {
+      if (!(value instanceof Block)) return
+      for (var x of Object.getOwnPropertySymbols(value)) {
+        var prop = (value as any)[x]
+        if (typeof x === 'symbol' && typeof prop === 'function' && prop.length === 0) {
+          views[x] = prop
+        }
+      }
+    })
+    console.log(Object.getOwnPropertySymbols(views))
+    return views
+  }
+
+  add(v: any) {
+    this.cache.set(v.constructor, v)
   }
 
   /**
@@ -160,76 +183,85 @@ export class Registry {
 
   }
 
+  async initPending() {
+    try {
+      for (var i of this.init_list) {
+        await i.init()
+      }
+    } finally {
+      this.init_list = []
+    }
+  }
+
 }
 
 
 /**
  * An App is a collection of building blocks that all together form an application.
  * These blocks contain code, data and views that produce DOM elements.
- * 
+ *
  * At its simplest, the App is activated on one or several blocks. These block in turn
  * can require other blocks or data classes to access them.
- * 
+ *
  * When changing main blocks, blocks that are no longer needed are de-inited.
- * 
+ *
  * A block may only exist once in an App.
- * 
+ *
  * An App may have "sub" Apps, which can contain their own specific versions of blocks.
- * 
+ *
  * When the App is mounted, it looks for a parent App and takes a subregistry
  * from it if it was found. Otherwise, it will just create its own registry.
- * 
+ *
  */
 export class App extends Mixin<Comment>{
-  
+
   registry = new Registry(this)
 
   // o_views really has symbol keys, typescript just does not support
   // this as of now.
-  o_views = new Observable<{[key: string]: () => Node}>({})
+  o_views = new Observable<{ [key: string]: () => Node }>({})
 
-  constructor(public main_view: Symbol) { 
-    super() 
+
+  constructor(public main_view: Symbol, protected init_list: (BlockInstantiator<any> | Data)[]) {
+    super()
   }
 
   /**
    * Activate blocks to change the application's state.
-   * 
+   *
    * @param params The blocks to activate, some states to put in the
    * registry already initialized to the correct values, etc.
    */
-  activate(...params: (BlockInstantiator|State)[]) {
+  activate(...params: (BlockInstantiator<any> | Data)[]) {
 
-    var par: any
-    for (par of params) {
-
-    }
+    params.filter(p => typeof p !== 'function').forEach(d => this.registry.add(d))
+    params.filter(p => typeof p === 'function').forEach((d: any) => this.registry.get(d))
+    // cleanup registry ?
+    this.registry.initPending()
 
     // Extract the views from the currently active blocks
-    var views: any = {}
-    // this.registry.forEach(value => {
-    //   for (var x in value) {
-    //     if (typeof x === 'symbol' && typeof value[x] === 'function' && value[x].length === 0)
-    //       views[x] = value[x]
-    //   }
-    // })
-    this.o_views.set(views)
+    this.o_views.set(this.registry.getViews())
   }
 
   /**
-   * 
+   *
    */
   inserted() {
     // Look for a parent app. If found, pick a subregistry and register it.
     var parent_app = App.get(this.node.parentNode!, true)
     this.registry.setParent(parent_app ? parent_app.registry : null)
+    this.activate(...this.init_list)
   }
 
   /**
-   * 
+   *
    */
   removed() {
     this.registry.setParent(null)
+  }
+
+  display(sym: Symbol) {
+    return Display(this.o_views.tf(v => v[sym as any] && v[sym as any]())) as Comment
   }
 
 }
@@ -237,12 +269,12 @@ export class App extends Mixin<Comment>{
 
 /**
  * Display the application.
- * 
+ *
  * @param main_view The symbol of the view to display
  * @param params Initialisation parameters
  */
-export function DisplayApp(main_view: Symbol, ...params: (BlockInstantiator|State)[]) {
-  var app = new App(main_view)
+export function DisplayApp(main_view: Symbol, ...params: (BlockInstantiator<any> | Data)[]) {
+  var app = new App(main_view, params)
   var disp = Display(app.o_views.tf(v => v[main_view as any] && v[main_view as any]())) as Comment
   app.addToNode(disp)
   return disp
