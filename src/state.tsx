@@ -1,5 +1,5 @@
 
-import { Observable, ReadonlyObserver, Display, Mixin, o } from 'elt'
+import { Observable, ReadonlyObserver, Display, Mixin, o, RO, ObserverFunction, Changes, ReadonlyObservable } from 'elt'
 
 
 export const Inited = Symbol('inited')
@@ -66,6 +66,27 @@ export class Block {
     })
   }
 
+  observe<T, U = void>(a: RO<T>, cbk: ObserverFunction<T, U>): ReadonlyObserver<T, U>
+  observe<T, U = void>(a: RO<T>, cbk: ObserverFunction<T, U>, immediate: true): ReadonlyObserver<T, U> | null
+  observe<T, U = void>(a: RO<T>, cbk: ReadonlyObserver<T, U> | ObserverFunction<T, U>, immediate?: boolean): ReadonlyObserver<T, U> | null {
+    if (immediate && !(a instanceof Observable)) {
+      typeof cbk === 'function' ? cbk(a as T, new Changes(a as T)) : cbk.call(a as T)
+      return null
+    }
+
+    const ob: ReadonlyObservable<T> = a instanceof Observable ? a : o(a)
+    const observer = typeof cbk === 'function' ?  ob.createObserver(cbk) : cbk
+    this.observers.push(observer)
+    observer.startObserving()
+    // observer.call(o.get(ob))
+    return observer
+  }
+
+  preInit() {
+    for (var o of this.observers) {
+      o.startObserving()
+    }
+  }
 
   /**
    * Extend this method to run code whenever the block is created and
@@ -73,6 +94,12 @@ export class Block {
    */
   async init(): Promise<any> {
 
+  }
+
+  preDeInit() {
+    for (var o of this.observers) {
+      o.stopObserving()
+    }
   }
 
   /**
@@ -203,6 +230,7 @@ export class Registry {
       if (!mark.has(key)) {
         this.cache.delete(key)
         if (value instanceof Block) {
+          value.preDeInit()
           value.deinit()
         }
       }
