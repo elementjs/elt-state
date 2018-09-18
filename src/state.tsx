@@ -51,7 +51,7 @@ export class Block {
   registry = this.app.registry
   is_static = false
 
-  private [requirements] = new Set<new (...a: any[]) => any>()
+  private [requirements] = new Set<Block | Data>()
   protected observers: ReadonlyObserver<any, any>[] = []
 
   mark(s: Set<Function>) {
@@ -82,6 +82,10 @@ export class Block {
 
   }
 
+  isActive() {
+    return this.app.active_blocks.indexOf(this.constructor as BlockInstantiator<any>) > -1
+  }
+
   /**
    *
    * @param block_def
@@ -99,11 +103,9 @@ export class Block {
     defaults?: any
   ): unknown {
 
-    this[requirements].add(def)
-
-    // this[InitList].push(s)
-    return this.registry.get(def, defaults)
-    // ... ?
+    var result = this.registry.get(def, defaults)
+    this[requirements].add(result)
+    return result
   }
 
   /**
@@ -246,6 +248,7 @@ export class App extends Mixin<Comment>{
   // o_views really has symbol keys, typescript just does not support
   // this as of now.
   o_views = new Observable<{ [key: string]: () => Node }>({})
+  active_blocks = [] as BlockInstantiator<any>[]
 
 
   constructor(public main_view: Symbol, protected init_list: (BlockInstantiator<any> | Data)[]) {
@@ -263,6 +266,7 @@ export class App extends Mixin<Comment>{
     var blocks = params.filter(p => typeof p === 'function') as BlockInstantiator<any>[]
     blocks.forEach((d: any) => this.registry.get(d))
     this.registry.cleanup(blocks)
+    this.active_blocks = blocks
 
     // Extract the views from the currently active blocks
     this.o_views.set(this.registry.getViews())
