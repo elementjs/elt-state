@@ -51,8 +51,9 @@ export class Block {
   registry = this.app.registry
   is_static = false
 
+  ;[Inited] = false
   private [requirements] = new Set<Block | Data>()
-  protected observers: ReadonlyObserver<any, any>[] = []
+  observers: ReadonlyObserver<any, any>[] = []
 
   mark(s: Set<Function>) {
     s.add(this.constructor)
@@ -77,8 +78,7 @@ export class Block {
     const ob: ReadonlyObservable<T> = a instanceof Observable ? a : o(a)
     const observer = typeof cbk === 'function' ?  ob.createObserver(cbk) : cbk
     this.observers.push(observer)
-    observer.startObserving()
-    // observer.call(o.get(ob))
+    if (this[Inited]) observer.startObserving()
     return observer
   }
 
@@ -232,6 +232,7 @@ export class Registry {
         if (value instanceof Block) {
           value.preDeInit()
           value.deinit()
+          value[Inited] = false
         }
       }
     })
@@ -242,6 +243,10 @@ export class Registry {
     try {
       for (var block of this.init_list) {
         await block.init()
+        block[Inited] = true
+        for (var ob of block.observers) {
+          ob.startObserving()
+        }
         i++
       }
     } finally {
