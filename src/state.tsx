@@ -231,7 +231,6 @@ export class Registry {
     // now, we sweep
     this.cache.forEach((value, key) => {
       if (!mark.has(key)) {
-        console.log('Cleaning', key.name)
         this.cache.delete(key)
         if (value instanceof Block) {
           value.preDeInit()
