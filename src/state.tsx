@@ -59,7 +59,9 @@ export class Block {
     s.add(this.constructor)
     this[requirements].forEach(req => {
       var proto = req.constructor
-      if (req instanceof Block && !s.has(proto)) {
+      if (req instanceof Observable) {
+        s.add(req.get().constructor)
+      } if (req instanceof Block && !s.has(proto)) {
         req.mark(s)
       } else {
         s.add(proto)
@@ -177,6 +179,7 @@ export class Registry {
   get(key: any, defaults?: any): any {
     // First try to see if we own a version of this service.
     var first_attempt = this.cache.get(key)
+
     if (first_attempt) return first_attempt
 
     // If we didn't and we have a parent, then we try to ask it
@@ -228,6 +231,7 @@ export class Registry {
     // now, we sweep
     this.cache.forEach((value, key) => {
       if (!mark.has(key)) {
+        console.log('Cleaning', key.name)
         this.cache.delete(key)
         if (value instanceof Block) {
           value.preDeInit()
