@@ -1,5 +1,5 @@
 
-import { Observable, ReadonlyObserver, Display, Mixin, o, RO, ObserverFunction, Changes, ReadonlyObservable } from 'elt'
+import { Display, Mixin, o } from 'elt'
 
 
 export const Inited = Symbol('inited')
@@ -53,13 +53,13 @@ export class Block {
 
   ;[Inited] = false
   private [requirements] = new Set<Block | Data>()
-  observers: ReadonlyObserver<any, any>[] = []
+  observers: o.ReadonlyObserver<any, any>[] = []
 
   mark(s: Set<Function>) {
     s.add(this.constructor)
     this[requirements].forEach(req => {
       var proto = req.constructor
-      if (req instanceof Observable) {
+      if (req instanceof o.Observable) {
         s.add(req.get().constructor)
       } if (req instanceof Block && !s.has(proto)) {
         req.mark(s)
@@ -69,15 +69,15 @@ export class Block {
     })
   }
 
-  observe<T, U = void>(a: RO<T>, cbk: ObserverFunction<T, U>): ReadonlyObserver<T, U>
-  observe<T, U = void>(a: RO<T>, cbk: ObserverFunction<T, U>, immediate: true): ReadonlyObserver<T, U> | null
-  observe<T, U = void>(a: RO<T>, cbk: ReadonlyObserver<T, U> | ObserverFunction<T, U>, immediate?: boolean): ReadonlyObserver<T, U> | null {
-    if (immediate && !(a instanceof Observable)) {
-      typeof cbk === 'function' ? cbk(a as T, new Changes(a as T)) : cbk.call(a as T)
+  observe<T, U = void>(a: o.RO<T>, cbk: o.ObserverFunction<T, U>): o.ReadonlyObserver<T, U>
+  observe<T, U = void>(a: o.RO<T>, cbk: o.ObserverFunction<T, U>, immediate: true): o.ReadonlyObserver<T, U> | null
+  observe<T, U = void>(a: o.RO<T>, cbk: o.ReadonlyObserver<T, U> | o.ObserverFunction<T, U>, immediate?: boolean): o.ReadonlyObserver<T, U> | null {
+    if (immediate && !(a instanceof o.Observable)) {
+      typeof cbk === 'function' ? cbk(a as T, new o.Changes(a as T)) : cbk.call(a as T)
       return null
     }
 
-    const ob: ReadonlyObservable<T> = a instanceof Observable ? a : o(a)
+    const ob: o.ReadonlyObservable<T> = a instanceof o.Observable ? a : o(a)
     const observer = typeof cbk === 'function' ?  ob.createObserver(cbk) : cbk
     this.observers.push(observer)
     if (this[Inited]) observer.startObserving()
@@ -125,7 +125,7 @@ export class Block {
    * @param klass
    * @param defaults
    */
-  require<T>(klass: new () => T, defaults?: Partial<T>): Observable<T>
+  require<T>(klass: new () => T, defaults?: Partial<T>): o.Observable<T>
   require(
     // this: Partial<>,
     def: new (...a: any[]) => any,
@@ -283,7 +283,7 @@ export class App extends Mixin<Comment>{
 
   // o_views really has symbol keys, typescript just does not support
   // this as of now.
-  o_views = new Observable<{ [key: string]: () => Node }>({})
+  o_views = new o.Observable<{ [key: string]: () => Node }>({})
   active_blocks = [] as BlockInstantiator<any>[]
 
 
