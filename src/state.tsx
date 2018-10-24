@@ -155,7 +155,7 @@ export class Registry {
 
   constructor(public app: App) { }
 
-  get<T>(klass: new () => T, defaults?: any): T
+  get<T>(klass: new () => T, defaults?: any): o.Observable<T>
   get<B extends Block>(creator: BlockInstantiator<B>): B
   get(key: any, defaults?: any): any {
     // First try to see if we own a version of this service.
@@ -195,8 +195,13 @@ export class Registry {
     return views
   }
 
-  add(v: any) {
-    this.cache.set(v.constructor, v)
+  setData(v: any) {
+    var prev = this.cache.get(v.constructor) as o.Observable<any>
+    if (prev) {
+      prev.set(v)
+    } else {
+      this.cache.set(v.constructor, o(v))
+    }
   }
 
   /**
@@ -279,7 +284,7 @@ export class App extends Mixin<Comment>{
    * registry already initialized to the correct values, etc.
    */
   async activate(...params: (BlockInstantiator<any> | Object)[]) {
-    params.filter(p => typeof p !== 'function').forEach(d => this.registry.add(d))
+    params.filter(p => typeof p !== 'function').forEach(d => this.registry.setData(d))
     var blocks = params.filter(p => typeof p === 'function') as BlockInstantiator<any>[]
     blocks.forEach((d: any) => this.registry.get(d))
     this.registry.cleanup(blocks)
