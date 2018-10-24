@@ -10,25 +10,6 @@ export interface BlockInstantiator<B extends Block> {
 }
 
 
-export class Data {
-
-  // FIXME use o.assign ?
-  create<S extends Data>(this: new () => S, ...values: Partial<S>[]) {
-    var c = new this()
-    Object.assign(c, ...values)
-    return c
-  }
-
-  clone(values: Partial<this>) {
-    var co = this.constructor as new () => this
-    var c = new co()
-    Object.assign(c, this, values)
-    return c
-  }
-
-}
-
-
 const requirements = Symbol('requirements')
 
 /**
@@ -52,7 +33,7 @@ export class Block {
   is_static = false
 
   ;[Inited] = false
-  private [requirements] = new Set<Block | Data>()
+  private [requirements] = new Set<Block | Object>()
   observers: o.ReadonlyObserver<any, any>[] = []
 
   mark(s: Set<Function>) {
@@ -287,7 +268,7 @@ export class App extends Mixin<Comment>{
   active_blocks = [] as BlockInstantiator<any>[]
 
 
-  constructor(public main_view: Symbol, protected init_list: (BlockInstantiator<any> | Data)[]) {
+  constructor(public main_view: Symbol, protected init_list: (BlockInstantiator<any> | Object)[]) {
     super()
   }
 
@@ -297,7 +278,7 @@ export class App extends Mixin<Comment>{
    * @param params The blocks to activate, some states to put in the
    * registry already initialized to the correct values, etc.
    */
-  async activate(...params: (BlockInstantiator<any> | Data)[]) {
+  async activate(...params: (BlockInstantiator<any> | Object)[]) {
     params.filter(p => typeof p !== 'function').forEach(d => this.registry.add(d))
     var blocks = params.filter(p => typeof p === 'function') as BlockInstantiator<any>[]
     blocks.forEach((d: any) => this.registry.get(d))
@@ -329,7 +310,9 @@ export class App extends Mixin<Comment>{
   }
 
   display(sym: Symbol) {
-    return Display(this.o_views.tf(v => v[sym as any] && v[sym as any]())) as Comment
+    return Display(this.o_views.tf(v => {
+      return v[sym as any] && v[sym as any]()
+    })) as Comment
   }
 
 }
@@ -341,7 +324,7 @@ export class App extends Mixin<Comment>{
  * @param main_view The symbol of the view to display
  * @param params Initialisation parameters
  */
-export function DisplayApp(main_view: Symbol, ...params: (BlockInstantiator<any> | Data)[]) {
+export function DisplayApp(main_view: Symbol, ...params: (BlockInstantiator<any> | Object)[]) {
   var app = new App(main_view, params)
   var disp = Display(app.o_views.tf(v => v[main_view as any] && v[main_view as any]())) as Comment
   app.addToNode(disp)
