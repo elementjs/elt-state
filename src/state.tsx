@@ -283,7 +283,7 @@ export class App extends Mixin<Comment>{
    * @param params The blocks to activate, some states to put in the
    * registry already initialized to the correct values, etc.
    */
-  async activate(...params: (BlockInstantiator<any> | Object)[]) {
+  activate(...params: (BlockInstantiator<any> | Object)[]) {
     params.filter(p => typeof p !== 'function').forEach(d => this.registry.setData(d))
     var blocks = params.filter(p => typeof p === 'function') as BlockInstantiator<any>[]
     blocks.forEach((d: any) => this.registry.get(d))
