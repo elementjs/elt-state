@@ -227,12 +227,13 @@ export class Registry {
     })
   }
 
-  async initPending() {
+  initPending() {
     var i = 0
     try {
       for (var block of this.init_list) {
-        await block.init()
+        if (block[Inited]) continue
         block[Inited] = true
+        block.init()
         for (var ob of block.observers) {
           ob.startObserving()
         }
