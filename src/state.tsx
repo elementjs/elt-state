@@ -6,6 +6,7 @@ export const Inited = Symbol('inited')
 export const Persist = Symbol('persistent')
 export const BlockInit = Symbol('block-init')
 export const InitPromise = Symbol('init-promise')
+export const Activate = Symbol('activate')
 
 export interface BlockInstantiator<B extends Block = Block> {
   new(app: App): B
@@ -103,9 +104,9 @@ export class Block {
 
     var requirement_blocks = Array.from(this[requirements]).filter(b => b instanceof Block) as Block[]
     // This is where we wait for all the required blocks to end their init.
-    await Promise.all(requirement_blocks.map(b => b[BlockInit]()))
     // Now we can init.
-    await this.init()
+    this[InitPromise] = Promise.all(requirement_blocks.map(b => b[BlockInit]())).then(() => this.init())
+    await this[InitPromise]
     this.startObservables()
     this[Inited] = true
   }
@@ -114,7 +115,16 @@ export class Block {
    * Extend this method to run code whenever the block is created and
    * integrated.
    */
-  async init(): Promise<any> {
+  async init(): Promise<void> {
+
+  }
+
+  async [Activate]() {
+    await this[BlockInit]()
+    await this.activate()
+  }
+
+  async activate(): Promise<void> {
 
   }
 
@@ -245,7 +255,8 @@ export class Registry {
       this.setData(d)
     }
     this.active_blocks = new Set(blocks)
-    this.active_blocks.forEach(b => this.get(b))
+    var insts = Array.from(this.active_blocks).map(b => this.get(b))
+    insts.forEach(i => i[Activate]())
     this.cleanup()
     this.initPending()
   }
