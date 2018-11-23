@@ -3,9 +3,11 @@ import { Display, Mixin, o } from 'elt'
 
 
 export const Inited = Symbol('inited')
+export const Persist = Symbol('persistent')
+export const BlockInit = Symbol('block-init')
+export const InitPromise = Symbol('init-promise')
 
-
-export interface BlockInstantiator<B extends Block> {
+export interface BlockInstantiator<B extends Block = Block> {
   new(app: App): B
 }
 
@@ -33,6 +35,9 @@ export class Block {
   is_static = false
 
   ;[Inited] = false
+  ;[Persist] = false
+  ;[InitPromise] = null as null | Promise<void>
+
   private [requirements] = new Set<Block | Object>()
   observers: o.ReadonlyObserver<any, any>[] = []
 
@@ -47,6 +52,22 @@ export class Block {
       } else {
         s.add(proto)
       }
+    })
+  }
+
+  runOnRequirementsAndSelf(fn: (b: Block) => void, mark = new Set<Block>()) {
+    mark.add(this)
+    this[requirements].forEach(req => {
+      if (req instanceof Block && !mark.has(req)) {
+        req.runOnRequirementsAndSelf(fn, mark)
+      }
+    })
+    fn(this)
+  }
+
+  addViews(views: {[name: string]: () => Node}) {
+    this.runOnRequirementsAndSelf(() => {
+
     })
   }
 
@@ -65,10 +86,28 @@ export class Block {
     return observer
   }
 
-  preInit() {
+  startObservables() {
     for (var o of this.observers) {
       o.startObserving()
     }
+  }
+
+  /**
+   * Wait for all the required blocks to init
+   */
+  async [BlockInit](): Promise<void> {
+    if (this[InitPromise]) {
+      await this[InitPromise]
+      return
+    }
+
+    var requirement_blocks = Array.from(this[requirements]).filter(b => b instanceof Block) as Block[]
+    // This is where we wait for all the required blocks to end their init.
+    await Promise.all(requirement_blocks.map(b => b[BlockInit]()))
+    // Now we can init.
+    await this.init()
+    this.startObservables()
+    this[Inited] = true
   }
 
   /**
@@ -79,7 +118,7 @@ export class Block {
 
   }
 
-  preDeInit() {
+  stopObservables() {
     for (var o of this.observers) {
       o.stopObserving()
     }
@@ -93,7 +132,7 @@ export class Block {
   }
 
   isActive() {
-    return this.app.active_blocks.indexOf(this.constructor as BlockInstantiator<any>) > -1
+    return this.app.registry.active_blocks.has(this.constructor as BlockInstantiator<this>)
   }
 
   /**
@@ -141,8 +180,12 @@ export class Registry {
 
   private cache = new Map<BlockInstantiator<any> | (new () => any), any>()
   private children = new Set<Registry>()
+  private persistents = new Set<Block>()
   private parent: Registry | null = null
   private init_list: Block[] = []
+  public active_blocks = new Set<BlockInstantiator>()
+
+  constructor(public app: App) { }
 
   setParent(parent: Registry | null) {
     if (parent != null) {
@@ -152,8 +195,6 @@ export class Registry {
     }
     this.parent = parent
   }
-
-  constructor(public app: App) { }
 
   get<T>(klass: new () => T, defaults?: any): o.Observable<T>
   get<B extends Block>(creator: BlockInstantiator<B>): B
@@ -178,21 +219,35 @@ export class Registry {
     this.cache.set(key, result)
     if (result instanceof Block)
       this.init_list.push(result)
+    if (result[Persist])
+      this.persistents.add(result)
     return result
   }
 
   getViews() {
-    var views: any = {}
-    this.cache.forEach(value => {
-      if (!(value instanceof Block)) return
-      for (var x of Object.getOwnPropertySymbols(value)) {
-        var prop = (value as any)[x]
-        if (typeof x === 'symbol' && typeof prop === 'function' && prop.length === 0) {
-          views[x] = prop
+    var views = new Map<Symbol, () => Node>()
+    this.active_blocks.forEach(inst => {
+      var block = this.get(inst)
+      block.runOnRequirementsAndSelf(b => {
+        for (var sym of Object.getOwnPropertySymbols(b)) {
+          var fn = (b as any)[sym]
+          if (typeof sym === 'symbol' && typeof fn === 'function' && fn.length === 0) {
+            views.set(sym, fn)
+          }
         }
-      }
+      })
     })
     return views
+  }
+
+  activate(blocks: BlockInstantiator[], data: Object[]) {
+    for (var d of data) {
+      this.setData(d)
+    }
+    this.active_blocks = new Set(blocks)
+    this.active_blocks.forEach(b => this.get(b))
+    this.cleanup()
+    this.initPending()
   }
 
   setData(v: any) {
@@ -207,19 +262,21 @@ export class Registry {
   /**
    * Remove entries from the registry
    */
-  cleanup(active_blocks: BlockInstantiator<any>[]) {
+  protected cleanup() {
     var mark = new Set<Function>()
-    for (var bl of active_blocks) {
+
+    this.persistents.forEach(b => b.mark(mark))
+    this.active_blocks.forEach(bl => {
       var b = this.cache.get(bl) as Block
       b.mark(mark)
-    }
+    })
 
     // now, we sweep
     this.cache.forEach((value, key) => {
       if (!mark.has(key)) {
         this.cache.delete(key)
         if (value instanceof Block) {
-          value.preDeInit()
+          value.stopObservables()
           value.deinit()
           value[Inited] = false
         }
@@ -231,12 +288,11 @@ export class Registry {
     var i = 0
     try {
       for (var block of this.init_list) {
-        if (block[Inited]) continue
-        block[Inited] = true
-        block.init()
-        for (var ob of block.observers) {
-          ob.startObserving()
-        }
+        // if (block[Inited]) continue
+        block[BlockInit]()
+        // block.init()
+        // block[Inited] = true
+        // block.startObservables()
         i++
       }
     } finally {
@@ -270,8 +326,8 @@ export class App extends Mixin<Comment>{
 
   // o_views really has symbol keys, typescript just does not support
   // this as of now.
-  o_views = new o.Observable<{ [key: string]: () => Node }>({})
-  active_blocks = [] as BlockInstantiator<any>[]
+  o_views = new o.Observable<Map<Symbol, () => Node>>(new Map)
+  active_blocks = new o.Observable<Set<BlockInstantiator>>(new Set())
 
 
   constructor(public main_view: Symbol, protected init_list: (BlockInstantiator<any> | Object)[]) {
@@ -285,17 +341,11 @@ export class App extends Mixin<Comment>{
    * registry already initialized to the correct values, etc.
    */
   activate(...params: (BlockInstantiator<any> | Object)[]) {
-    params.filter(p => typeof p !== 'function').forEach(d => this.registry.setData(d))
-    var blocks = params.filter(p => typeof p === 'function') as BlockInstantiator<any>[]
-    blocks.forEach((d: any) => this.registry.get(d))
-    this.registry.cleanup(blocks)
-    this.active_blocks = blocks
-
-    // Extract the views from the currently active blocks
+    var data = params.filter(p => typeof p !== 'function')
+    var blocks = params.filter(p => typeof p === 'function') as BlockInstantiator[]
+    this.registry.activate(blocks, data)
+    this.active_blocks.set(this.registry.active_blocks)
     this.o_views.set(this.registry.getViews())
-
-    // Launch the init of each block
-    this.registry.initPending()
   }
 
   /**
@@ -317,7 +367,8 @@ export class App extends Mixin<Comment>{
 
   display(sym: Symbol) {
     return Display(this.o_views.tf(v => {
-      return v[sym as any] && v[sym as any]()
+      var view = v.get(sym)
+      return view && view()
     })) as Comment
   }
 
@@ -332,7 +383,7 @@ export class App extends Mixin<Comment>{
  */
 export function DisplayApp(main_view: Symbol, ...params: (BlockInstantiator<any> | Object)[]) {
   var app = new App(main_view, params)
-  var disp = Display(app.o_views.tf(v => v[main_view as any] && v[main_view as any]())) as Comment
+  var disp = app.display(main_view)
   app.addToNode(disp)
   return disp
 }
