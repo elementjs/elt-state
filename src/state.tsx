@@ -250,10 +250,20 @@ export class Registry {
     return views
   }
 
+  /**
+   * Activate the given blocks with the given data
+   * If all the blocks were already active, then only the data will be set,
+   * but the views won't be refreshed (as they're the same).
+   *
+   * @param blocks: The blocks to activate
+   * @param data: The data to preload
+   */
   activate(blocks: BlockInstantiator[], data: Object[]) {
     for (var d of data) {
       this.setData(d)
     }
+
+    // FIXME check that the blocks are not the same
     this.active_blocks = new Set(blocks)
     var insts = Array.from(this.active_blocks).map(b => this.get(b))
     insts.forEach(i => i[Activate]())
